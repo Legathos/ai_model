@@ -1,43 +1,33 @@
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from transformers import AutoImageProcessor, SiglipForImageClassification
 from PIL import Image
 import torch
 import base64
 import io
-import numpy as np
 import uvicorn
-from pathlib import Path
 from pydantic import BaseModel
 
-# Create FastAPI app
 app = FastAPI(title="Food Classification API")
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Set up templates
 templates = Jinja2Templates(directory="templates")
 
-# Define request model for base64 image
 class ImageRequest(BaseModel):
-    image_base64: str  # Base64 encoded image
-
-# Load model and processor
+    image_base64: str
 model_name = "prithivMLmods/Food-101-93M"
 model = SiglipForImageClassification.from_pretrained(model_name)
 processor = AutoImageProcessor.from_pretrained(model_name)
 
-# Food-101 labels
 labels = {
     "0": "apple_pie", "1": "baby_back_ribs", "2": "baklava", "3": "beef_carpaccio", "4": "beef_tartare",
     "5": "beet_salad", "6": "beignets", "7": "bibimbap", "8": "bread_pudding", "9": "breakfast_burrito",
@@ -65,7 +55,6 @@ labels = {
 
 
 def classify_food(image):
-    """Predicts the type of food in the image."""
     inputs = processor(images=image, return_tensors="pt")
 
     with torch.no_grad():
@@ -74,7 +63,6 @@ def classify_food(image):
         probs = torch.nn.functional.softmax(logits, dim=1).squeeze().tolist()
 
     predictions = {labels[str(i)]: round(probs[i], 3) for i in range(len(probs))}
-    # Sort by descending probability and get top 5
     predictions = dict(sorted(predictions.items(), key=lambda item: item[1], reverse=True)[:5])
 
     return predictions
@@ -86,21 +74,13 @@ async def index(request: Request):
 
 
 @app.post('/predict')
-@app.post('/estimateFoodFromImage')
 async def predict(request: ImageRequest):
     try:
         if not request.image_base64:
             raise HTTPException(status_code=400, detail="No image data provided")
 
-        # Decode base64 image
         try:
-            # Remove potential data URL prefix
-            if ',' in request.image_base64:
-                base64_data = request.image_base64.split(',')[1]
-            else:
-                base64_data = request.image_base64
-
-            # Decode base64 string to bytes
+            base64_data = request.image_base64.split(',')[1] if ',' in request.image_base64 else request.image_base64
             image_data = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(image_data)).convert('RGB')
             predictions = classify_food(image)
