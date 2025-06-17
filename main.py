@@ -8,6 +8,9 @@ import torch
 import base64
 import io
 import uvicorn
+import requests
+import asyncio
+import aiohttp
 from pydantic import BaseModel
 
 app = FastAPI(title="Food Classification API")
@@ -24,10 +27,13 @@ templates = Jinja2Templates(directory="templates")
 
 class ImageRequest(BaseModel):
     image_base64: str
+
+# Your existing model loading code...
 model_name = "prithivMLmods/Food-101-93M"
 model = SiglipForImageClassification.from_pretrained(model_name)
 processor = AutoImageProcessor.from_pretrained(model_name)
 
+# Your existing labels dictionary...
 labels = {
     "0": "apple_pie", "1": "baby_back_ribs", "2": "baklava", "3": "beef_carpaccio", "4": "beef_tartare",
     "5": "beet_salad", "6": "beignets", "7": "bibimbap", "8": "bread_pudding", "9": "breakfast_burrito",
@@ -53,7 +59,56 @@ labels = {
     "95": "sushi", "96": "tacos", "97": "takoyaki", "98": "tiramisu", "99": "tuna_tartare", "100": "waffles"
 }
 
+# Nutrition data fetching function
+async def get_nutrition_data(food_name: str):
+    """
+    Fetch nutrition data from USDA FoodData Central API
+    """
+    try:
+        # USDA FoodData Central API endpoint
+        base_url = "https://api.nal.usda.gov/fdc/v1/foods/search"
+        api_key = "1bieAVDICSX62FitKZB6g9pp8vphNjR31GyQZgK3"
+        
+        params = {
+            "query": food_name.replace("_", " "),
+            "api_key": api_key,
+            "pageSize": 1,
+            "sortBy": "publishedDate",
+            "sortOrder": "desc"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(base_url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("foods"):
+                        food_item = data["foods"][0]
+                        
+                        # Extract key nutritional information
+                        nutrition = {}
+                        for nutrient in food_item.get("foodNutrients", []):
+                            nutrient_name = nutrient.get("nutrientName", "").lower()
+                            nutrient_value = nutrient.get("value", 0)
+                            nutrient_unit = nutrient.get("unitName", "")
+                            
+                            # Map important nutrients
+                            if "energy" in nutrient_name or "calorie" in nutrient_name:
+                                nutrition["calories"] = f"{nutrient_value} {nutrient_unit}"
+                            elif "protein" in nutrient_name:
+                                nutrition["protein"] = f"{nutrient_value} {nutrient_unit}"
+                            elif "carbohydrate" in nutrient_name:
+                                nutrition["carbohydrates"] = f"{nutrient_value} {nutrient_unit}"
+                            elif "total lipid" in nutrient_name or "fat" in nutrient_name:
+                                nutrition["fat"] = f"{nutrient_value} {nutrient_unit}"
 
+                        return nutrition
+                
+                return {"error": "No nutrition data found"}
+    
+    except Exception as e:
+        return {"error": f"Failed to fetch nutrition data: {str(e)}"}
+
+# Your existing classify_food function...
 def classify_food(image):
     inputs = processor(images=image, return_tensors="pt")
 
@@ -67,11 +122,9 @@ def classify_food(image):
 
     return predictions
 
-
 @app.get('/', response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
-
 
 @app.post('/predict')
 async def predict(request: ImageRequest):
@@ -84,14 +137,21 @@ async def predict(request: ImageRequest):
             image_data = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(image_data)).convert('RGB')
             predictions = classify_food(image)
+            
+            # Get nutrition data for the top prediction
+            top_food = list(predictions.keys())[0]
+            nutrition_data = await get_nutrition_data(top_food)
 
-            return {"predictions": predictions}
+            return {
+                "predictions": predictions,
+                "nutrition": nutrition_data,
+                "top_prediction": top_food
+            }
         except base64.binascii.Error:
             raise HTTPException(status_code=400, detail="Invalid base64 image data")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 if __name__ == '__main__':
     uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
