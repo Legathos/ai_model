@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Classification</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #e9f7ef;
+            display: none;
+        }
+        #predictions {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Food Classification</h1>
+        <p>Upload an image of food to classify it.</p>
+
+        <div class="form-group">
+            <input type="file" id="imageInput" accept="image/*">
+            <button onclick="classifyImage()">Classify</button>
+        </div>
+
+        <div id="result">
+            <h2>Classification Results:</h2>
+            <div id="predictions"></div>
+        </div>
+    </div>
+
+    <script>
+        // Function to convert file to base64
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        async function classifyImage() {
+            const fileInput = document.getElementById('imageInput');
+            const resultDiv = document.getElementById('result');
+            const predictionsDiv = document.getElementById('predictions');
+
+            if (!fileInput.files.length) {
+                alert('Please select an image file');
+                return;
+            }
+
+            try {
+                // Convert file to base64
+                const base64Image = await fileToBase64(fileInput.files[0]);
+
+                // Send base64 image to server
+                const response = await fetch('/estimateFoodFromImage', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        image_base64: base64Image
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                // Display results
+                predictionsDiv.innerHTML = '';
+                for (const [food, probability] of Object.entries(data.predictions)) {
+                    const predItem = document.createElement('p');
+                    predItem.textContent = `${food}: ${(probability * 100).toFixed(1)}%`;
+                    predictionsDiv.appendChild(predItem);
+                }
+
+                resultDiv.style.display = 'block';
+
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
